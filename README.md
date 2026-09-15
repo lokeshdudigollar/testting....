@@ -1,41 +1,25 @@
 ```mermaid
-flowchart TB
-  subgraph client["Client"]
-    UI["React SPA<br/>served as static files<br/>from inside the image"]
-  end
+sequenceDiagram
+  autonumber
+  participant U as Browser
+  participant E as SPCS endpoint
+  participant A as FastAPI / ChatService
+  participant P as Snowflake Postgres
+  participant M as Cortex inference
+  participant S as Cortex Search
 
-  subgraph acct["Snowflake account"]
-    ING["Public endpoint<br/>requires BIND SERVICE ENDPOINT"]
-
-    subgraph pool["COMPUTE POOL mr_chatbot_pool — CPU_X64_S"]
-      subgraph svc["SERVICE mr_chatbot_svc — one container, 329MB"]
-        API["FastAPI / uvicorn<br/>PORT from env<br/>/api/live readiness probe<br/>size limits + rate limiting"]
-        AGENT["Deep agent loop<br/>16 markdown skills<br/>persona instructions"]
-        API --> AGENT
-      end
-    end
-
-    CS["CORTEX SEARCH SERVICE mr_chatbot_chunks<br/>hybrid, managed embeddings<br/>managed rerank, owner's rights"]
-    CHUNKS["TABLE semantic_chunks<br/>18 columns"]
-    CORTEX["Cortex inference<br/>OpenAI-compatible<br/>chat completions"]
-    PG["Snowflake Postgres<br/>sessions, chat_history, studies"]
-    WH["WAREHOUSE mr_chatbot_wh"]
-    SRC["Source study metadata"]
-    DT["Dynamic Table or Task<br/>studies refresh"]
-    STAGE["EXTERNAL STAGE<br/>+ STORAGE INTEGRATION<br/>source documents"]
-    SEC["SECRET objects"]
-    EAI["EXTERNAL ACCESS INTEGRATION<br/>+ NETWORK RULE"]
-  end
-
-  UI --> ING
-  ING --> API
-  AGENT -->|"tool call + completion"| CORTEX
-  AGENT -->|"search_market_research"| CS
-  CHUNKS -->|"TARGET_LAG refresh"| CS
-  API -->|"sessions, history, filters"| PG
-  API -.->|"filter panel fallback only"| WH
-  SRC --> DT --> PG
-  STAGE -.->|"re-ingestion only"| CHUNKS
-  SEC -.->|"env injection at start"| API
-  EAI -.->|"only if egress needed"| svc
+  U->>E: POST /api/chat/stream
+  E->>A: request + Snowflake identity
+  A->>P: load session, history, selected filters
+  A->>A: resolve user scope, build search filter
+  A->>M: system prompt + skills + tool schema
+  M-->>A: tool_call search_market_research
+  A->>S: query text + structured filter
+  S-->>A: ranked chunks + requested columns
+  A->>M: tool result
+  M-->>A: streamed answer deltas
+  A-->>U: SSE tokens
+  A->>A: derive answer_state, citations, limitations
+  A->>P: persist turn
+  A-->>U: done event
 ```
